@@ -70,6 +70,945 @@ router.use((req, res, next) => {
 });
 
 // =====================================================================
+// ENHANCED MEMORY INTENT ANALYZER - HANDLES SEARCH, UPDATE, DELETE
+// =====================================================================
+/**
+ * Analyzes user prompt to detect memory-related intent (search, update, or delete)
+ * @param {string} userPrompt - The user's message
+ * @returns {Promise<Object>} - Object with intent and related parameters
+ */
+async function analyzeMemoryIntent(userPrompt) {
+  console.log("🧠 [MEMORY_ANALYZER] Analyzing memory intent:", userPrompt?.slice(0, 50));
+  appLogger.log('MEMORY', 'Analyzing memory intent', { userPrompt }, 'memory.analyze.1');
+  
+  const prompt = `
+You are a detector for memory-related queries.
+
+Analyze this query to determine if it's:
+1. Searching for stored memory 
+2. Trying to update/correct a stored memory
+3. Trying to delete a stored memory
+4. Just a regular conversation or sharing new information
+
+If it's a search query, respond with:
+{ "intent": "search", "search_term": "..." }
+
+If it's an update query, respond with:
+{ "intent": "update", "search_term": "...", "new_value": "..." }
+
+If it's a delete query, respond with:
+{ "intent": "delete", "search_term": "..." }
+
+Otherwise (regular conversation/sharing):
+{ "intent": "conversation" }
+
+Examples:
+- "What's my dog's name?" -> { "intent": "search", "search_term": "dog name" }
+- "My dog's name is not Rex, it's Max" -> { "intent": "update", "search_term": "dog name", "new_value": "Max" }
+- "Update Uday's birthday to May 6th" -> { "intent": "update", "search_term": "Uday birthday", "new_value": "May 6th" }
+- "Change my favorite color from blue to red" -> { "intent": "update", "search_term": "favorite color", "new_value": "red" }
+- "Delete what I told you about my job" -> { "intent": "delete", "search_term": "job" }
+- "I like pizza" -> { "intent": "conversation" }
+
+IMPORTANT: Always extract the correct search terms and new values for proper memory operations.
+For updates, correctly identify both what needs to be searched for and the new value to replace it with.
+
+User message: "${userPrompt}"
+`;
+
+  try {
+    console.log("🧠 [MEMORY_ANALYZER] Sending intent detection prompt to OpenAI");
+    appLogger.log('OPENAI_REQUEST', 'Sending memory intent detection prompt to OpenAI', { prompt }, 'memory.analyze.2');
+    
+    const apiStartTime = Date.now();
+    
+    const apiResponse = await openai.chat.completions.create({
+      model: "gpt-4-turbo",
+      messages: [{ role: "system", content: prompt }],
+      temperature: 0.2
+    });
+    
+    const apiDuration = Date.now() - apiStartTime;
+    console.log(`⏱️ [OPENAI] Memory intent analysis completed in ${apiDuration}ms`);
+    appLogger.log('OPENAI_DEBUG', 'OpenAI API call duration', { 
+      durationMs: apiDuration,
+      success: true 
+    }, 'memory.analyze.2.1');
+
+    const content = apiResponse.choices[0].message.content.trim();
+    console.log("📬 [OPENAI_RAW] Memory intent response:", content);
+    appLogger.log('OPENAI_RESPONSE', 'Received memory intent analysis', { raw: content }, 'memory.analyze.3');
+    
+    // Parse the JSON response
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (parseError) {
+      console.error("❌ [MEMORY_PARSE] JSON parsing error:", parseError.message);
+      appLogger.log('ERROR', 'Failed to parse memory intent analysis', { 
+        error: parseError.message, 
+        rawContent: content,
+        userPrompt 
+      }, 'memory.analyze.3.error');
+      
+      return { intent: "conversation" }; // Default to conversation on parse error
+    }
+
+    if (parsed.intent === undefined) {
+      console.error("❌ [MEMORY_PARSE] Missing 'intent' property");
+      appLogger.log('ERROR', 'Invalid memory intent structure', { 
+        error: "Missing 'intent' property", 
+        parsed,
+        userPrompt 
+      }, 'memory.analyze.3.error');
+      
+      return { intent: "conversation" };
+    }
+    
+    console.log("🧠 [MEMORY_ANALYZER] Intent detected:", parsed.intent);
+    appLogger.log('MEMORY', 'Memory intent detection result', { 
+      intent: parsed.intent,
+      searchTerm: parsed.search_term || null,
+      newValue: parsed.new_value || null
+    }, 'memory.analyze.4');
+
+    return parsed;
+  } catch (err) {
+    console.error("❌ [MEMORY_ANALYZER] Error:", err.message);
+    appLogger.log('ERROR', 'Memory intent analysis error', { 
+      error: err.message,
+      stack: err.stack,
+      userPrompt 
+    }, 'memory.analyze.error');
+    
+    // Default to conversation on error
+    return { intent: "conversation" };
+  }
+}
+
+// =====================================================================
+// MEMORY SEARCH HANDLER - WITH IMPROVED RANKING AND FILTERING
+// =====================================================================
+/**
+ * Builds a clean memory table from memory entries
+ * @param {Array} memoryEntries - Memory entries with metadata
+ * @returns {Array} - Formatted memory table
+ */
+function buildMemoryTable(memoryEntries = []) {
+  if (!Array.isArray(memoryEntries) || memoryEntries.length === 0) {
+    return [];
+  }
+  
+  return memoryEntries.map(entry => ({
+    id: entry.id || `legacy_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    text: entry.text || '',
+    timestamp: entry.timestamp || new Date().toISOString(),
+    date: entry.memory_date || new Date().toISOString().split('T')[0],
+    column: entry.column || '',
+    rowId: entry.rowId || 0,
+    matchCount: entry.matchCount || 0
+  }));
+}
+
+/**
+ * Filters and sorts memory table by match count
+ * @param {Array} table - Memory table
+ * @param {number} minMatch - Minimum match count to include
+ * @returns {Array} - Filtered and sorted memory table
+ */
+function filterAndSortMemoryTable(table, minMatch = 1) {
+  if (!Array.isArray(table) || table.length === 0) {
+    return [];
+  }
+  
+  // First sort by matchCount (descending)
+  const sorted = [...table].sort((a, b) => b.matchCount - a.matchCount);
+  
+  // If we have enough results with high match counts, filter by minimum threshold
+  if (sorted.length > 3 && sorted[0].matchCount >= minMatch) {
+    return sorted.filter(entry => entry.matchCount >= minMatch);
+  }
+  
+  // Otherwise return all results (sorted)
+  return sorted;
+}
+
+/**
+ * Handle search for memory entries with improved matching and ranking
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {string} searchTerm - The term to search for
+ * @param {number} userId - User ID
+ * @returns {Promise<Object>} - Response object
+ */
+async function handleMemorySearch(req, res, searchTerm, userId, requestId) {
+  console.log(`🔍 [MEMORY] Searching memory for: "${searchTerm}"`);
+  appLogger.log('MEMORY', 'Processing memory search', { 
+    searchTerm, 
+    userId,
+    requestId 
+  }, 'memory.search.1');
+  
+  try {
+    // Get raw memory search results with match counts from db.js
+    const memoryData = await db.searchMemory(userId, searchTerm);
+    console.log(`🔍 [MEMORY] Search returned ${memoryData.length} raw results`);
+    
+    if (memoryData.length === 0) {
+      appLogger.log('MEMORY', 'No memory search results found', { searchTerm }, 'memory.search.3');
+      
+      return res.json({
+        message: `I don't have any stored memories about "${searchTerm}". Would you like to tell me about it?`,
+        resultType: 'memory',
+        results: []
+      });
+    }
+    
+    // Build structured memory table from search results
+    const memoryTable = buildMemoryTable(memoryData);
+    console.log(`🔍 [MEMORY] Built memory table with ${memoryTable.length} entries`);
+    
+    // Apply adaptive minimum match threshold based on best match
+    const bestMatchScore = memoryTable.length > 0 ? memoryTable[0].matchCount : 0;
+    let minMatchThreshold = 1; // Default threshold
+    
+    // Adjust threshold based on best match quality
+    if (bestMatchScore > 10) {
+      minMatchThreshold = 3; // For very strong matches, be more selective
+    } else if (bestMatchScore > 5) {
+      minMatchThreshold = 2; // For medium-strength matches
+    }
+    
+    console.log(`🔍 [MEMORY] Using match threshold ${minMatchThreshold} (best score: ${bestMatchScore})`);
+    
+    // Filter and sort by match count
+    const topMatches = filterAndSortMemoryTable(memoryTable, minMatchThreshold);
+    console.log(`🔍 [MEMORY] Filtered to ${topMatches.length} top matches`);
+    
+    // Take at most 10 results to avoid overwhelming the API
+    const limitedMatches = topMatches.slice(0, 10);
+    
+    if (limitedMatches.length > 0) {
+      // Format dates properly for display
+      const formattedResults = limitedMatches.map(item => {
+        return {
+          ...item,
+          formattedDate: new Date(item.date).toLocaleDateString('en-US', {
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric'
+          })
+        };
+      });
+      
+      appLogger.log('MEMORY', 'Memory search results', { 
+        searchTerm,
+        resultCount: formattedResults.length,
+        topMatchScore: formattedResults[0]?.matchCount || 0
+      }, 'memory.search.2');
+      
+      // Log top matches for debugging
+      console.log(`🔍 [MEMORY] Top 3 matches:`);
+      formattedResults.slice(0, 3).forEach((match, i) => {
+        console.log(`  ${i+1}. Score ${match.matchCount}: "${match.text.substring(0, 50)}..."`);
+      });
+      
+      // Generate summary of top memory search results
+      const summary = await summarizeMemoryFacts(formattedResults, searchTerm);
+      
+      return res.json({
+        message: summary,
+        resultType: 'memory',
+        results: formattedResults
+      });
+    } else {
+      appLogger.log('MEMORY', 'No matching results after filtering', { searchTerm }, 'memory.search.3');
+      
+      return res.json({
+        message: `I don't have any stored memories about "${searchTerm}". Would you like to tell me about it?`,
+        resultType: 'memory',
+        results: []
+      });
+    }
+  } catch (err) {
+    console.error("❌ [MEMORY_SEARCH] Error:", err.message);
+    appLogger.log('ERROR', 'Memory search error', { 
+      error: err.message,
+      stack: err.stack,
+      searchTerm,
+      userId,
+      requestId
+    }, 'memory.search.error');
+    
+    return res.status(500).json({ 
+      message: "Sorry, I couldn't search your memories right now.",
+      resultType: "memory"
+    });
+  }
+}
+
+// =====================================================================
+// MEMORY UPDATE HANDLER
+// =====================================================================
+/**
+ * Handle intent to update memory entries
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {string} searchTerm - Term to search for memory to update
+ * @param {string} newValue - New value to update to
+ * @param {number} userId - User ID
+ * @returns {Promise<Object>} - Response object
+ */
+async function handleMemoryUpdate(req, res, searchTerm, newValue, userId, requestId) {
+  console.log(`🔄 [MEMORY] Update request for: ${searchTerm} -> ${newValue}`);
+  appLogger.log('MEMORY', 'Processing memory update request', { 
+    searchTerm, 
+    newValue,
+    userId,
+    requestId 
+  }, 'memory.update.1');
+  
+  try {
+    // First, search for matching memories
+    const searchResults = await db.searchMemory(userId, searchTerm);
+    
+    // Build memory table from search results
+    const memoryTable = buildMemoryTable(searchResults);
+    
+    // Sort by match count 
+    const sortedResults = filterAndSortMemoryTable(memoryTable, 0); // Include all matches
+    
+    if (sortedResults.length === 0) {
+      appLogger.log('MEMORY', 'No memories found to update', { searchTerm }, 'memory.update.2');
+      
+      return res.json({
+        message: `I couldn't find any memories about "${searchTerm}" to update. Would you like to add this information instead?`,
+        resultType: 'memory',
+        action: 'not_found'
+      });
+    }
+    
+    // Format results for display
+    const formattedResults = sortedResults.map(item => {
+      return {
+        ...item,
+        formattedDate: new Date(item.date).toLocaleDateString('en-US', {
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric'
+        })
+      };
+    });
+    
+    appLogger.log('MEMORY', 'Found memories for update selection', { 
+      count: formattedResults.length,
+      searchTerm,
+      newValue 
+    }, 'memory.update.3');
+    
+    // We're returning the search results so the frontend can display them
+    // with update buttons. The actual update will happen in a separate request.
+    return res.json({
+      message: `I found ${sortedResults.length} ${sortedResults.length === 1 ? 'memory' : 'memories'} about "${searchTerm}". Which one would you like to update?`,
+      resultType: 'memory',
+      action: 'update_choice',
+      results: formattedResults,
+      newValue
+    });
+  } catch (err) {
+    console.error("❌ [MEMORY_UPDATE] Error:", err.message);
+    appLogger.log('ERROR', 'Memory update selection error', { 
+      error: err.message,
+      stack: err.stack,
+      searchTerm,
+      newValue,
+      userId,
+      requestId
+    }, 'memory.update.error');
+    
+    return res.status(500).json({ 
+      message: "Sorry, I couldn't process your memory update request right now.",
+      resultType: "memory"
+    });
+  }
+}
+
+// =====================================================================
+// MEMORY UPDATE PROCESSOR - HANDLES THE ACTUAL MEMORY UPDATE
+// =====================================================================
+/**
+ * Process memory update after user selects which memory to update
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Promise<Object>} - Response object
+ */
+async function processMemoryUpdate(req, res) {
+  try {
+    // Extract parameters - only need memoryId, newValue, and userId
+    const { memoryId, newValue, userId: bodyUserId } = req.body;
+    const userId = req.user ? req.user.id : bodyUserId;
+    
+    console.log(`🔄 [MEMORY_UPDATE_PROCESS] Received update request from frontend:`, {
+      memoryId: typeof memoryId === 'string' ? memoryId.slice(0, 30) + '...' : memoryId,
+      newValue: newValue?.slice(0, 30) + '...',
+      userId,
+      hasReqUser: !!req.user
+    });
+    
+    // Check for all required parameters including userId
+    if (!memoryId || !newValue || !userId) {
+      console.error(`❌ [MEMORY_UPDATE_PROCESS] Missing required parameters:`, {
+        hasMemoryId: !!memoryId,
+        hasNewValue: !!newValue,
+        hasUserId: !!userId
+      });
+      
+      return res.status(400).json({ 
+        message: "Missing required parameters for memory update",
+        resultType: "memory"
+      });
+    }
+    
+    // Use the simplified database function to update memory
+    console.log(`🔄 [MEMORY_UPDATE_PROCESS] Calling updateMemory function with userId: ${userId}`);
+    const updated = await db.updateMemory(userId, memoryId, newValue);
+    
+    console.log(`🔄 [MEMORY_UPDATE_PROCESS] updateMemory result:`, updated);
+    
+    if (!updated) {
+      appLogger.log('ERROR', 'Memory update failed', { 
+        userId
+      }, 'memory.update.process.error');
+      
+      return res.status(500).json({
+        message: "Failed to update memory. Please try again.",
+        resultType: "memory"
+      });
+    }
+    
+    appLogger.log('MEMORY', 'Memory successfully updated', { 
+      memoryId: typeof memoryId === 'string' ? memoryId.slice(0, 50) : memoryId,
+      newValue: newValue.slice(0, 50),
+      userId
+    }, 'memory.update.process.5');
+    
+    return res.json({
+      message: `I've updated the memory to "${newValue}".`,
+      resultType: "memory",
+      action: "updated"
+    });
+  } catch (error) {
+    console.error("❌ [MEMORY_UPDATE_PROCESS] Error:", error.message);
+    appLogger.log('ERROR', 'Memory update processing error', {
+      error: error.message,
+      stack: error.stack
+    }, 'memory.update.process.error');
+    
+    return res.status(500).json({ 
+      message: "Sorry, I couldn't update your memory right now.",
+      resultType: "memory"
+    });
+  }
+}
+
+// =====================================================================
+// MEMORY DELETION HANDLER
+// =====================================================================
+/**
+ * Handle intent to delete memory entries
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {string} searchTerm - Term to search for memory to delete
+ * @param {number} userId - User ID
+ * @returns {Promise<Object>} - Response object
+ */
+async function handleMemoryDeletion(req, res, searchTerm, userId, requestId) {
+  console.log(`🗑️ [MEMORY] Deletion request for: ${searchTerm}`);
+  appLogger.log('MEMORY', 'Processing memory deletion request', { 
+    searchTerm, 
+    userId,
+    requestId 
+  }, 'memory.delete.1');
+  
+  try {
+    // First, search for matching memories
+    const searchResults = await db.searchMemory(userId, searchTerm);
+    
+    // Build memory table from search results
+    const memoryTable = buildMemoryTable(searchResults);
+    
+    // Sort by match count 
+    const sortedResults = filterAndSortMemoryTable(memoryTable, 0); // Include all matches
+    
+    if (sortedResults.length === 0) {
+      appLogger.log('MEMORY', 'No memories found to delete', { searchTerm }, 'memory.delete.2');
+      
+      return res.json({
+        message: `I couldn't find any memories about "${searchTerm}" to delete.`,
+        resultType: 'memory',
+        action: 'not_found'
+      });
+    }
+    
+    // Format results for display
+    const formattedResults = sortedResults.map(item => {
+      return {
+        ...item,
+        formattedDate: new Date(item.date).toLocaleDateString('en-US', {
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric'
+        })
+      };
+    });
+    
+    appLogger.log('MEMORY', 'Found memories for deletion selection', { 
+      count: formattedResults.length,
+      searchTerm
+    }, 'memory.delete.3');
+    
+    // We're returning the search results so the frontend can display them
+    // with delete buttons. The actual deletion will happen in a separate request.
+    return res.json({
+      message: `I found ${sortedResults.length} ${sortedResults.length === 1 ? 'memory' : 'memories'} about "${searchTerm}". Which one would you like to delete?`,
+      resultType: 'memory',
+      action: 'delete_choice',
+      results: formattedResults
+    });
+  } catch (err) {
+    console.error("❌ [MEMORY_DELETE] Error:", err.message);
+    appLogger.log('ERROR', 'Memory deletion selection error', { 
+      error: err.message,
+      stack: err.stack,
+      searchTerm,
+      userId,
+      requestId
+    }, 'memory.delete.error');
+    
+    return res.status(500).json({ 
+      message: "Sorry, I couldn't process your memory deletion request right now.",
+      resultType: "memory"
+    });
+  }
+}
+
+// =====================================================================
+// MEMORY DELETION PROCESSOR - HANDLES THE ACTUAL MEMORY DELETION
+// =====================================================================
+/**
+ * Process memory deletion after user selects which memory to delete
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Promise<Object>} - Response object
+ */
+async function processMemoryDeletion(req, res) {
+  try {
+    // Extract parameters - only need memoryId and userId
+    const { memoryId, userId: bodyUserId } = req.body;
+    const userId = req.user ? req.user.id : bodyUserId;
+    
+    console.log(`🗑️ [MEMORY_DELETE_PROCESS] Received delete request from frontend:`, {
+      memoryId: typeof memoryId === 'string' ? memoryId.slice(0, 30) + '...' : memoryId,
+      userId,
+      hasReqUser: !!req.user
+    });
+    
+    // Check for all required parameters including userId
+    if (!memoryId || !userId) {
+      console.error(`❌ [MEMORY_DELETE_PROCESS] Missing required parameters:`, {
+        hasMemoryId: !!memoryId,
+        hasUserId: !!userId
+      });
+      
+      return res.status(400).json({ 
+        message: "Missing required parameters for memory deletion",
+        resultType: "memory"
+      });
+    }
+    
+    // Use the simplified database function to delete memory
+    console.log(`🗑️ [MEMORY_DELETE_PROCESS] Calling deleteMemory function with userId: ${userId}`);
+    const deleted = await db.deleteMemory(userId, memoryId);
+    
+    console.log(`🗑️ [MEMORY_DELETE_PROCESS] deleteMemory result:`, deleted);
+    
+    if (!deleted) {
+      appLogger.log('ERROR', 'Memory deletion failed', { 
+        userId
+      }, 'memory.delete.process.error');
+      
+      return res.status(500).json({
+        message: "Failed to delete memory. Please try again.",
+        resultType: "memory"
+      });
+    }
+    
+    appLogger.log('MEMORY', 'Memory successfully deleted', { 
+      memoryId: typeof memoryId === 'string' ? memoryId.slice(0, 50) : memoryId,
+      userId
+    }, 'memory.delete.process.5');
+    
+    return res.json({
+      message: `I've deleted the memory.`,
+      resultType: "memory",
+      action: "deleted"
+    });
+  } catch (error) {
+    console.error("❌ [MEMORY_DELETE_PROCESS] Error:", error.message);
+    appLogger.log('ERROR', 'Memory deletion processing error', {
+      error: error.message,
+      stack: error.stack
+    }, 'memory.delete.process.error');
+    
+    return res.status(500).json({ 
+      message: "Sorry, I couldn't delete your memory right now.",
+      resultType: "memory"
+    });
+  }
+}
+
+// =====================================================================
+// MEMORY CONVERSATION HANDLER
+// =====================================================================
+/**
+ * Process a conversation in memory mode for storing facts
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {string} userPrompt - User's message
+ * @param {number} userId - User ID
+ * @param {string} requestId - Unique request identifier
+ * @returns {Promise<Object>} - Response object
+ */
+async function handleMemoryConversationPrompt(req, res, userPrompt, userId, requestId) {
+  console.log("🧠 [MEMORY_CONV] Processing memory conversation:", userPrompt?.slice(0, 50));
+  appLogger.log('MEMORY', 'Processing memory conversation for storing facts', { 
+    userPrompt: userPrompt?.slice(0, 50),
+    requestId
+  }, 'memory.conv.1');
+  
+  try {
+    const prompt = `
+You are an AI assistant that helps store personal information the user shares.
+Analyze this message and determine if there's any personal information to remember:
+
+"${userPrompt}"
+
+Reply in JSON format:
+{
+  "reply": "Your friendly response to the user",
+  "store": true/false,
+  "memory": "The exact fact to store (only if store=true)"
+}
+
+Examples:
+- If user says "My birthday is May 5th": 
+  { "reply": "I'll remember that your birthday is May 5th!", "store": true, "memory": "User's birthday is May 5th" }
+- If user says "Uday's birthday is June 10th":
+  { "reply": "I'll remember that Uday's birthday is June 10th!", "store": true, "memory": "Uday's birthday is June 10th" }
+- If user says "I like pizza": 
+  { "reply": "Thanks for letting me know you enjoy pizza!", "store": true, "memory": "User likes pizza" }
+- If user says "How are you today?": 
+  { "reply": "I'm doing well, thanks for asking! How are you?", "store": false }
+
+Always capture personal information, preferences, dates, names, and facts.
+IMPORTANT: For dates, include the full date in the memory. Don't convert dates to a format that might cause "Invalid Date" errors.
+`;
+
+    console.log("🔎 [OPENAI_REQUEST] Sending memory conversation prompt to OpenAI");
+    appLogger.log('OPENAI_REQUEST', 'Sending memory conversation prompt to OpenAI', { 
+      prompt 
+    }, 'memory.conv.2');
+    
+    const apiStartTime = Date.now();
+    
+    const apiResponse = await openai.chat.completions.create({
+      model: "gpt-4-turbo",
+      messages: [{ role: "system", content: prompt }],
+      temperature: 0.6
+    });
+    
+    const apiDuration = Date.now() - apiStartTime;
+    console.log(`⏱️ [OPENAI] Memory conversation API call completed in ${apiDuration}ms`);
+    appLogger.log('OPENAI_DEBUG', 'OpenAI API call duration', { 
+      durationMs: apiDuration,
+      success: true 
+    }, 'memory.conv.2.1');
+
+    const content = apiResponse.choices[0].message.content.trim();
+    console.log("📬 [OPENAI_RAW] Memory conversation response:", content);
+    
+    // Parse the JSON response
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (parseError) {
+      console.error("❌ [MEMORY_PARSE] JSON parsing error:", parseError.message);
+      appLogger.log('ERROR', 'Failed to parse memory conversation response', { 
+        error: parseError.message, 
+        rawContent: content,
+        userPrompt 
+      }, 'memory.conv.3.error');
+      
+      // Return a fallback response
+      return res.json({
+        message: "I understand, but I'm having trouble processing that right now.",
+        resultType: "memory"
+      });
+    }
+    
+    // Extract reply and store information
+    const reply = parsed.reply || "I'm here to help!";
+    const shouldStore = parsed.store === true;
+    const memoryText = parsed.memory;
+    
+    // Store memory if needed and get the memory ID
+    let memoryId = null;
+    if (shouldStore && memoryText) {
+      console.log("🧠 [MEMORY_STORE] Storing memory fact:", memoryText);
+      
+      // db.saveMemory now returns the memory ID
+      memoryId = await db.saveMemory(userId, memoryText);
+      
+      appLogger.log('MEMORY', 'Stored memory fact', { 
+        userId, 
+        memoryText,
+        memoryId
+      }, 'memory.conv.4');
+    }
+    
+    // Include memoryId in the response if available
+    const response = {
+      message: reply,
+      resultType: "memory"
+    };
+    
+    if (memoryId) {
+      response.memoryId = memoryId;
+    }
+    
+    // Return the conversation response
+    return res.json(response);
+    
+  } catch (err) {
+    console.error("❌ [MEMORY_CONV] Error:", err.message);
+    
+    appLogger.log('ERROR', 'Memory conversation error', {
+      requestId,
+      error: err.message,
+      stack: err.stack
+    }, 'memory.conv.error');
+    
+    // Log error to database
+    try {
+      await db.logError({
+        message: err.message,
+        location: 'handleMemoryConversationPrompt',
+        stack: err.stack,
+        userAgent: req.headers['user-agent']
+      });
+    } catch (logError) {
+      console.error('❌ [ERROR_LOG] Failed to log error to database:', logError.message);
+    }
+    
+    return res.status(500).json({ 
+      message: "Sorry, I couldn't process your memory message right now.",
+      resultType: "memory"
+    });
+  }
+}
+
+// =====================================================================
+// MEMORY SUMMARY - IMPROVED PROMPT FOR BETTER ACCURACY
+// =====================================================================
+/**
+ * Summarizes memory results into a natural language response with improved prompting
+ * @param {Array} memories - Memory items retrieved from database
+ * @param {string} userQuery - The original user query
+ * @returns {Promise<string>} - Formatted response
+ */
+async function summarizeMemoryFacts(memories, userQuery) {
+  console.log("📊 [MEMORY_SUMMARY] Summarizing", memories.length, "memory facts");
+  appLogger.log('MEMORY', 'Summarizing memory facts', { 
+    userQuery, 
+    memoryCount: memories.length,
+    topMemoryScore: memories[0]?.matchCount || 0
+  }, 'memory.summary.1');
+  
+  if (!memories || memories.length === 0) {
+    return "I don't have any stored memories about that.";
+  }
+  
+  // Include relevance scores in prompt for better context
+  const scoredMemories = memories.map(m => ({
+    text: m.text,
+    score: m.matchCount || 0,
+    date: m.formattedDate || new Date(m.date).toLocaleDateString()
+  }));
+  
+  // IMPROVED: Enhanced prompt for better answers with ranking context
+  const summaryPrompt = `
+You are a personal memory assistant that helps recall stored information.
+
+A user asked: "${userQuery}"
+
+Here are stored memory facts that match their question, ranked by relevance score (higher is better):
+${scoredMemories.map((mem, i) => `${i+1}. [Score: ${mem.score}] "${mem.text}" (from ${mem.date})`).join('\n')}
+
+Only use these facts to answer the question. Do NOT guess or assume. 
+If none of the facts directly answer the question, respond with: "I have some information that might be related, but I don't have a specific answer to your question."
+
+Your response should be:
+1. Accurate - only use the information in the memories
+2. Concise - respond in 1-2 sentences
+3. Helpful - prioritize information from higher-scored memories
+4. Confident - when a clear answer exists in a high-scoring memory
+
+IMPORTANT: If the memories contain any dates, leave them exactly as they appear (don't try to reformat or make them more specific).
+Don't attempt to extract or calculate dates from the text in ways that could cause "Invalid Date" errors.
+`;
+
+  try {
+    console.log("🔎 [OPENAI_REQUEST] Sending memory summarization prompt to OpenAI");
+    appLogger.log('OPENAI_REQUEST', 'Sending memory summarization prompt to OpenAI', { 
+      summaryPrompt, 
+      memoryCount: memories.length,
+      topScore: scoredMemories[0]?.score || 0
+    }, 'memory.summary.2');
+    
+    const apiStartTime = Date.now();
+    
+    const apiResponse = await openai.chat.completions.create({
+      model: "gpt-4-turbo",
+      messages: [
+        { role: "system", content: "You are a helpful assistant that summarizes stored memories." },
+        { role: "user", content: summaryPrompt }
+      ],
+      temperature: 0.3 // Lower temperature for more precise answers
+    });
+    
+    const apiDuration = Date.now() - apiStartTime;
+    console.log(`⏱️ [OPENAI] Memory summary API call completed in ${apiDuration}ms`);
+    appLogger.log('OPENAI_DEBUG', 'OpenAI API call duration', { 
+      durationMs: apiDuration,
+      success: true 
+    }, 'memory.summary.2.1');
+
+    const content = apiResponse.choices[0].message.content.trim();
+    console.log("📬 [OPENAI_RAW] Memory summary response:", content);
+    appLogger.log('OPENAI_RESPONSE', 'Received memory summary response', { 
+      summary: content 
+    }, 'memory.summary.3');
+    
+    return content;
+  } catch (err) {
+    console.error("❌ [MEMORY_SUMMARY] Error:", err.message);
+    appLogger.log('ERROR', 'Memory summarization error', { 
+      error: err.message,
+      stack: err.stack,
+      userQuery
+    }, 'memory.summary.error');
+    
+    // Fallback to basic summary
+    const factCount = memories.length;
+    return `I found ${factCount} ${factCount === 1 ? 'memory' : 'memories'} related to your question. ${memories[0]?.text || ''}`;
+  }
+}
+
+// =====================================================================
+// MASTER MEMORY HANDLER
+// =====================================================================
+/**
+ * Master handler for all memory-related requests
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Promise<Object>} - Response object
+ */
+async function handleMemoryPrompt(req, res) {
+  const requestId = Date.now().toString();
+  const userId = req.user ? req.user.id : req.body.userId; // MODIFIED: Added fallback
+  const { prompt } = req.body;
+  
+  console.log(`🧠 [MEMORY_MASTER] Processing memory request ${requestId}:`, prompt?.slice(0, 50));
+  appLogger.log('MEMORY', 'Starting memory request processing', { 
+    requestId,
+    prompt: prompt?.slice(0, 50),
+    userId,
+    hasReqUser: !!req.user
+  }, 'memory.master.1');
+  
+  // MODIFIED: Check if we have a valid userId
+  if (!userId) {
+    console.error("❌ [MEMORY_MASTER] No user ID available");
+    return res.status(400).json({
+      message: "User ID is required for memory operations",
+      resultType: "memory"
+    });
+  }
+  
+  try {
+    // First, analyze the intent of the memory request
+    const intentAnalysis = await analyzeMemoryIntent(prompt);
+    
+    // Route based on the detected intent
+    switch (intentAnalysis.intent) {
+      case "search":
+        appLogger.log('MEMORY', 'Routing to memory search handler', { 
+          searchTerm: intentAnalysis.search_term 
+        }, 'memory.master.route.search');
+        
+        return await handleMemorySearch(req, res, intentAnalysis.search_term, userId, requestId);
+        
+      case "update":
+        appLogger.log('MEMORY', 'Routing to memory update handler', { 
+          searchTerm: intentAnalysis.search_term,
+          newValue: intentAnalysis.new_value
+        }, 'memory.master.route.update');
+        
+        return await handleMemoryUpdate(req, res, intentAnalysis.search_term, intentAnalysis.new_value, userId, requestId);
+        
+      case "delete":
+        appLogger.log('MEMORY', 'Routing to memory deletion handler', { 
+          searchTerm: intentAnalysis.search_term 
+        }, 'memory.master.route.delete');
+        
+        return await handleMemoryDeletion(req, res, intentAnalysis.search_term, userId, requestId);
+        
+      case "conversation":
+      default:
+        appLogger.log('MEMORY', 'Routing to conversation handler', { 
+          intent: intentAnalysis.intent 
+        }, 'memory.master.route.conversation');
+        
+        return await handleMemoryConversationPrompt(req, res, prompt, userId, requestId);
+    }
+  } catch (error) {
+    console.error("❌ [MEMORY_MASTER] Error:", error.message);
+    appLogger.log('ERROR', 'Memory master handler error', {
+      requestId,
+      error: error.message,
+      stack: error.stack
+    }, 'memory.master.error');
+    
+    // Log error to database
+    try {
+      await db.logError({
+        message: error.message,
+        location: 'handleMemoryPrompt',
+        stack: error.stack,
+        userAgent: req.headers['user-agent']
+      });
+    } catch (logError) {
+      console.error('❌ [ERROR_LOG] Failed to log error to database:', logError.message);
+    }
+    
+    return res.status(500).json({ 
+      message: "Sorry, I couldn't process your memory request right now.",
+      resultType: "memory"
+    });
+  }
+}
+
+// =====================================================================
 // PROMPT 1A: CLASSIFY BUSINESS INPUT
 // =====================================================================
 /**
@@ -247,12 +1186,14 @@ async function generateMemoFilters(userMessage) {
   console.log("🤖 [OPENAI] Generating memo filters for:", userMessage?.slice(0, 50));
   appLogger.log('PIPELINE', 'Generating memo filters', { userMessage }, '2.1');
   
+  // NEW/MODIFIED: Updated systemPrompt to include memo action detection
   const systemPrompt = `
 You are a MySQL assistant for filtering a "memos" table.
 Extract search filters from this user message:
 "${userMessage}"
 `;
 
+  // NEW/MODIFIED: Updated instruction with action detection
   const instruction = `
 Table structure:
 - memoNumber (int)
@@ -385,8 +1326,8 @@ Even if the user message is vague, provide the best possible general filters. If
       
       throw new Error("Invalid response structure: missing 'filters' property");
     }
-
-    // Check for action and log it if present
+    
+    // NEW/MODIFIED: Log if an action was detected
     if (parsed.action) {
       console.log("🔎 [ACTION] Detected memo action:", parsed.action);
       appLogger.log('ACTION_DETECTION', 'Detected memo action', { 
@@ -402,6 +1343,7 @@ Even if the user message is vague, provide the best possible general filters. If
       filters: parsed.filters
     }, '2.4');
 
+    // NEW/MODIFIED: Return the full parsed object, not just the filters
     return parsed;
   } catch (err) {
     console.error("❌ [OPENAI_ERROR] Memo filter error:", err.message);
@@ -1042,17 +1984,17 @@ async function mainPipelineHandler(req, res) {
     // Step 2: Process based on classification
     let results = [];
     let message = '';
-    let action = null;
-    let memoNumber = null;
-    let customerName = null;
     
     switch (classification) {
       case 'memo':
-        // Generate filters from the user's natural language query
+        // NEW/MODIFIED: Generate filters from the user's natural language query with action detection
         const memoFilters = await generateMemoFilters(prompt);
         console.log('📋 [MEMOS] Filters generated:', memoFilters);
         
-        // Extract action if present in memo filters
+        // NEW/MODIFIED: Extract action if present in memo filters
+        let action = null;
+        let memoNumber = null;
+        let customerName = null;
         if (memoFilters.action) {
           action = memoFilters.action;
           memoNumber = memoFilters.memoNumber;
@@ -1061,17 +2003,24 @@ async function mainPipelineHandler(req, res) {
           console.log(`🎯 [ACTION] Detected memo action: ${action}`);
         }
         
-        // Add user ID to ensure data isolation
-        memoFilters.filters.userId = userId;
+        // NEW/MODIFIED: Add user ID to ensure data isolation
+        if (memoFilters.filters) {
+          memoFilters.filters.userId = userId;
+          
+          // Query the database with the generated filters
+          results = await db.findMemos(memoFilters.filters);
+        } else {
+          // Backward compatibility for old format
+          memoFilters.userId = userId;
+          results = await db.findMemos(memoFilters);
+        }
         
-        // Query the database with the generated filters
-        results = await db.findMemos(memoFilters.filters);
         console.log(`📊 [MEMOS] Found ${results.length} results`);
         
         // Generate natural language summary
         message = await summarizeResults(prompt, results, 'memo');
         
-        // Return results with action info if present
+        // NEW/MODIFIED: Return results with action info if present
         return res.json({
           message,
           resultType: 'memo',
@@ -1158,13 +2107,330 @@ async function mainPipelineHandler(req, res) {
 }
 
 // =====================================================================
-// ROUTE DEFINITION
+// CHAT ROUTES
 // =====================================================================
 
-// Main endpoint for processing AI requests
-router.post('/process', auth, mainPipelineHandler);
+// Get all chats for the authenticated user (paginated)
+router.get('/api/chats', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    console.log(`Fetching all chats for user ${userId}`);
+    
+    // Use the getRecentChats function with high limit for backward compatibility
+    const chats = await db.getRecentChats(userId, 50, 0);
+    
+    // Format for compatibility with legacy format
+    const formattedChats = chats.map(chat => {
+      // Get the first message content as title or use a default
+      const title = chat.messages && chat.messages.length > 0 && chat.messages[0].content
+        ? chat.messages[0].content.substring(0, 30) + (chat.messages[0].content.length > 30 ? '...' : '')
+        : 'Untitled Chat';
+        
+      return {
+        id: chat.rowId,
+        rowId: chat.rowId,
+        column: chat.column,
+        title: title,
+        chat_date: chat.chat_date,
+        message_count: chat.messages ? chat.messages.length : 0
+      };
+    });
+    
+    res.json({ 
+      success: true, 
+      chats: formattedChats
+    });
+  } catch (error) {
+    console.error('Error getting chats:', error);
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
 
-// Simple test endpoint
+// Get recent chats with pagination
+router.get('/api/chats/recent', auth, async (req, res) => {
+  try {
+    // Add debug logging to identify issues
+    console.log("[DEBUG] Starting /api/chats/recent route");
+    console.log("[DEBUG] User:", req.user);
+    
+    const userId = req.user.id;
+    const limit = parseInt(req.query.limit) || 12;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    console.log(`[DEBUG] Getting recent chats with userId=${userId}, limit=${limit}, offset=${offset}`);
+    
+    // Check if getRecentChats exists
+    console.log("[DEBUG] db.getRecentChats exists:", typeof db.getRecentChats === 'function');
+    
+    // Get chats from the database
+    const chats = await db.getRecentChats(userId, limit, offset);
+    console.log(`[DEBUG] Found ${chats.length} chats`);
+    
+    res.json({ 
+      success: true, 
+      chats: chats
+    });
+  } catch (error) {
+    console.error('Error in /api/chats/recent:', error);
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+// Search chats
+router.get('/api/chats/search', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const query = req.query.q;
+    
+    if (!query) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'Search query is required'
+      });
+    }
+    
+    console.log(`Searching chats for user ${userId} with query "${query}"`);
+    
+    const results = await db.searchChats(userId, query);
+    
+    res.json({ 
+      success: true, 
+      results: results
+    });
+  } catch (error) {
+    console.error('Error searching chats:', error);
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+// Get one chat by row+column
+router.get('/api/chats/single', auth, async (req, res) => {
+  try {
+    const { rowId, column } = req.query;
+    const userId = req.user.id;
+    
+    if (!rowId || !column) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'Both rowId and column are required'
+      });
+    }
+    
+    console.log(`Fetching chat at row ${rowId}, column ${column} for user ${userId}`);
+    
+    const chat = await db.getChatByRowAndColumn(rowId, column, userId);
+    
+    if (!chat) {
+      return res.status(404).json({
+        error: 'Chat not found',
+        message: `Chat at row ${rowId}, column ${column} not found or you don't have access`
+      });
+    }
+    
+    res.json({
+      success: true,
+      messages: chat.messages
+    });
+  } catch (error) {
+    console.error(`Error fetching chat:`, error);
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+// Create a new chat
+router.post('/api/chats', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    console.log(`Creating new chat for user ${userId}`);
+    
+    // Create new chat with column-based architecture
+    const chatLocation = await db.createNewChat(userId);
+    
+    // Return success with the new chat details
+    res.status(201).json({
+      success: true,
+      message: 'Chat created successfully',
+      chat: {
+        id: chatLocation.rowId, // For backward compatibility
+        rowId: chatLocation.rowId,
+        column: chatLocation.column,
+        title: 'New Chat',
+        chat_date: new Date().toISOString().split('T')[0]
+      }
+    });
+  } catch (error) {
+    console.error('Error creating chat:', error);
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+// Add message to a chat
+router.post('/api/chats/:chatId/messages', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const chatId = parseInt(req.params.chatId);
+    const { message, column } = req.body;
+    
+    if (isNaN(chatId)) {
+      return res.status(400).json({
+        error: 'Invalid chat ID',
+        message: 'Chat ID must be a number'
+      });
+    }
+    
+    if (!message || typeof message !== 'object') {
+      return res.status(400).json({
+        error: 'Invalid message format',
+        message: 'Message must be an object with role and content'
+      });
+    }
+    
+    // Column might be provided in request or need to be determined
+    let chatColumn = column;
+    
+    if (!chatColumn) {
+      // Try to find which column contains this chat
+      const hourColumns = Array.from({ length: 24 }, (_, i) => `h${i.toString().padStart(2, '0')}`);
+      for (const col of hourColumns) {
+        const chat = await db.getChatByRowAndColumn(chatId, col, userId);
+        if (chat) {
+          chatColumn = col;
+          break;
+        }
+      }
+      
+      if (!chatColumn) {
+        return res.status(404).json({
+          error: 'Chat not found',
+          message: 'Unable to locate the chat. Please provide column name.'
+        });
+      }
+    }
+    
+    console.log(`Adding message to chat ${chatId}, column ${chatColumn} for user ${userId}`);
+    
+    // Add timestamp if not provided
+    if (!message.timestamp) {
+      message.timestamp = new Date().toISOString();
+    }
+    
+    try {
+      const updatedChat = await db.addMessageToChat(chatId, chatColumn, userId, message);
+      
+      res.json({
+        success: true,
+        message: 'Message added successfully',
+        chatMessages: updatedChat
+      });
+    } catch (error) {
+      // Special handling for chat size limit
+      if (error.message && error.message.includes('Chat memory is full')) {
+        return res.status(400).json({
+          error: 'Chat size limit exceeded',
+          message: 'Chat memory is full. Please start a new chat.'
+        });
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error adding message to chat:', error);
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+// Delete a chat
+router.delete('/api/chats/:chatId', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const chatId = parseInt(req.params.chatId);
+    const { column } = req.body;
+    
+    if (isNaN(chatId)) {
+      return res.status(400).json({
+        error: 'Invalid chat ID',
+        message: 'Chat ID must be a number'
+      });
+    }
+    
+    // Column might be provided in request or need to be determined
+    let chatColumn = column;
+    
+    if (!chatColumn) {
+      // Try to find which column contains this chat
+      const hourColumns = Array.from({ length: 24 }, (_, i) => `h${i.toString().padStart(2, '0')}`);
+      for (const col of hourColumns) {
+        const chat = await db.getChatByRowAndColumn(chatId, col, userId);
+        if (chat) {
+          chatColumn = col;
+          break;
+        }
+      }
+      
+      if (!chatColumn) {
+        return res.status(404).json({
+          error: 'Chat not found',
+          message: 'Unable to locate the chat. Please provide column name.'
+        });
+      }
+    }
+    
+    console.log(`Deleting chat ${chatId}, column ${chatColumn} for user ${userId}`);
+    
+    const success = await db.deleteChat(chatId, chatColumn, userId);
+    
+    res.json({
+      success,
+      message: 'Chat deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting chat:', error);
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+// =====================================================================
+// COMMON API ENDPOINTS
+// =====================================================================
+
+// Main API endpoint for processing requests
+router.post('/process', auth, async (req, res) => {
+  await mainPipelineHandler(req, res);
+});
+
+// Memory management endpoints
+router.post('/memory/update', auth, async (req, res) => {
+  console.log('🔄 [API] Received memory update request');
+  await processMemoryUpdate(req, res);
+});
+
+router.post('/memory/delete', auth, async (req, res) => {
+  console.log('🗑️ [API] Received memory delete request');
+  await processMemoryDeletion(req, res);
+});
+
+// Simple test endpoint for connection debugging
 router.post('/test', auth, (req, res) => {
   console.log("🧪 TEST endpoint reached!");
   console.log("Request body:", req.body);
@@ -1175,4 +2441,5 @@ router.post('/test', auth, (req, res) => {
   });
 });
 
+// Export the router
 module.exports = router;
