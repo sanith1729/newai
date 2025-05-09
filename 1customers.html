@@ -1,1 +1,588 @@
+<!-- Customers Management Component -->
+<div class="customers-module">
+  <!-- Customers header -->
+  <div class="customers-header">
+    <h2 class="content-title">Customers</h2>
+    <div class="header-actions">
+      <div class="search-container">
+        <input type="text" id="searchCustomers" class="search-input" placeholder="Search customers...">
+      </div>
+      <button id="refreshCustomersBtn" class="btn">
+        <i class="fas fa-sync-alt"></i> Refresh
+      </button>
+      <button id="createCustomerBtn" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Add Customer
+      </button>
+    </div>
+  </div>
 
+  <!-- Customers table -->
+  <div class="customers-table-container">
+    <table class="customers-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>City/State</th>
+          <th>Memos</th>
+          <th>Last Purchase</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="customersTableBody">
+        <!-- Customer rows will be populated here -->
+        <tr>
+          <td colspan="7" class="loading-cell">
+            <div class="loading-container">
+              <div class="spinner"></div>
+              <p>Loading customers...</p>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="pagination">
+    <button id="prevCustomersPageBtn" class="btn btn-sm" disabled>
+      <i class="fas fa-chevron-left"></i> Previous
+    </button>
+    <span id="customersPaginationInfo">Page 1 of 1</span>
+    <button id="nextCustomersPageBtn" class="btn btn-sm" disabled>
+      Next <i class="fas fa-chevron-right"></i>
+    </button>
+  </div>
+
+  <!-- Customer Modal -->
+  <div id="customerModal" class="modal-overlay" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="customerModalTitle" class="modal-title">Add Customer</h3>
+        <button class="modal-close" id="closeCustomerModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="customerForm">
+          <input type="hidden" id="customerId">
+          
+          <div class="form-row">
+            <div class="form-group form-col">
+              <label for="customerName" class="form-label required">Name</label>
+              <input type="text" id="customerName" class="form-control" required>
+            </div>
+            <div class="form-group form-col">
+              <label for="customerCompany" class="form-label">Company</label>
+              <input type="text" id="customerCompany" class="form-control">
+            </div>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group form-col">
+              <label for="customerEmail" class="form-label">Email</label>
+              <input type="email" id="customerEmail" class="form-control">
+            </div>
+            <div class="form-group form-col">
+              <label for="customerPhone" class="form-label">Phone</label>
+              <input type="tel" id="customerPhone" class="form-control">
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="customerAddress" class="form-label">Address</label>
+            <input type="text" id="customerAddress" class="form-control">
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group form-col">
+              <label for="customerCity" class="form-label">City</label>
+              <input type="text" id="customerCity" class="form-control">
+            </div>
+            <div class="form-group form-col">
+              <label for="customerState" class="form-label">State</label>
+              <input type="text" id="customerState" class="form-control">
+            </div>
+            <div class="form-group form-col">
+              <label for="customerZip" class="form-label">Zip Code</label>
+              <input type="text" id="customerZip" class="form-control">
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="customerNotes" class="form-label">Notes</label>
+            <textarea id="customerNotes" class="form-control" rows="3"></textarea>
+          </div>
+          
+          <!-- Customer preferences section -->
+          <div class="preferences-section">
+            <h4 class="section-title">Preferences</h4>
+            
+            <div class="form-row">
+              <div class="form-group form-col">
+                <label for="customerCategory" class="form-label">Category</label>
+                <select id="customerCategory" class="form-control">
+                  <option value="retail">Retail</option>
+                  <option value="wholesale">Wholesale</option>
+                  <option value="dealer">Dealer</option>
+                </select>
+              </div>
+              <div class="form-group form-col">
+                <label for="customerCreditLimit" class="form-label">Credit Limit</label>
+                <input type="number" id="customerCreditLimit" class="form-control" min="0" step="100">
+              </div>
+            </div>
+            
+            <div class="checkbox-group">
+              <label class="checkbox-option">
+                <input type="checkbox" id="customerSendMarketing">
+                Send marketing emails
+              </label>
+              <label class="checkbox-option">
+                <input type="checkbox" id="customerTaxExempt">
+                Tax exempt
+              </label>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button id="cancelCustomerBtn" class="btn">Cancel</button>
+        <button id="saveCustomerBtn" class="btn btn-primary">Save Customer</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Customer View Modal -->
+  <div id="customerViewModal" class="modal-overlay" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="customerViewName" class="modal-title">Customer Details</h3>
+        <button class="modal-close" id="closeCustomerViewModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="customer-details">
+          <!-- Customer information sections -->
+          <div class="details-section">
+            <h4 class="section-title">Contact Information</h4>
+            <div class="detail-row">
+              <div class="detail-label">Email:</div>
+              <div id="viewCustomerEmail" class="detail-value">-</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">Phone:</div>
+              <div id="viewCustomerPhone" class="detail-value">-</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">Address:</div>
+              <div id="viewCustomerAddress" class="detail-value">-</div>
+            </div>
+          </div>
+          
+          <div class="details-section">
+            <h4 class="section-title">Purchase History</h4>
+            <div class="purchase-summary">
+              <div class="summary-stat">
+                <div class="stat-value" id="viewCustomerTotalSpent">$0.00</div>
+                <div class="stat-label">Total Spent</div>
+              </div>
+              <div class="summary-stat">
+                <div class="stat-value" id="viewCustomerMemoCount">0</div>
+                <div class="stat-label">Memos</div>
+              </div>
+              <div class="summary-stat">
+                <div class="stat-value" id="viewCustomerLastPurchase">-</div>
+                <div class="stat-label">Last Purchase</div>
+              </div>
+            </div>
+            
+            <div class="activity-timeline">
+              <h5 class="timeline-title">Recent Activity</h5>
+              <div id="customerTimeline" class="timeline">
+                <!-- Timeline will be populated here -->
+                <div class="timeline-item">
+                  <div class="timeline-icon">
+                    <i class="fas fa-file-invoice"></i>
+                  </div>
+                  <div class="timeline-content">
+                    <div class="timeline-header">
+                      <span class="timeline-title">Memo #7021 Created</span>
+                      <span class="timeline-date">June 12, 2023</span>
+                    </div>
+                    <div class="timeline-body">2 items - Diamond Ring (1.5ct) and Diamond Earrings</div>
+                  </div>
+                </div>
+                <div class="timeline-item">
+                  <div class="timeline-icon">
+                    <i class="fas fa-dollar-sign"></i>
+                  </div>
+                  <div class="timeline-content">
+                    <div class="timeline-header">
+                      <span class="timeline-title">Invoice #3042 Paid</span>
+                      <span class="timeline-date">May 28, 2023</span>
+                    </div>
+                    <div class="timeline-body">$5,850.00 - Payment processed via credit card</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="details-section">
+            <h4 class="section-title">Notes</h4>
+            <div id="viewCustomerNotes" class="customer-notes">
+              No notes available.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="closeViewBtn" class="btn">Close</button>
+        <button id="editFromViewBtn" class="btn btn-primary">Edit Customer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Customer Management Module Styles */
+  .customers-module {
+    padding: 24px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* Header */
+  .customers-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .search-container {
+    width: 280px;
+    position: relative;
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 8px 12px 8px 36px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    font-size: 14px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236E6E80' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 12px center;
+    transition: var(--transition);
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+
+  /* Customers table */
+  .customers-table-container {
+    background-color: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    overflow: auto;
+  }
+
+  .customers-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .customers-table th,
+  .customers-table td {
+    padding: 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--divider-color);
+  }
+
+  .customers-table th {
+    background-color: #F7F7F8;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--secondary-text);
+  }
+
+  .customers-table tbody tr:hover {
+    background-color: rgba(16, 163, 127, 0.05);
+  }
+
+  .loading-cell {
+    text-align: center;
+    padding: 40px;
+  }
+
+  .loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  /* Customer information */
+  .customer-name {
+    font-weight: 500;
+  }
+
+  .customer-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .customer-action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--secondary-color);
+    color: var(--secondary-text);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .customer-action-btn:hover {
+    background-color: var(--divider-color);
+    color: var(--text-color);
+  }
+
+  .view-btn:hover {
+    color: var(--link-color);
+  }
+
+  .edit-btn:hover {
+    color: var(--primary-color);
+  }
+
+  .delete-btn:hover {
+    color: var(--danger-color);
+  }
+
+  /* Pagination */
+  .pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .btn-sm {
+    padding: 6px 12px;
+    font-size: 14px;
+  }
+
+  #customersPaginationInfo {
+    font-size: 14px;
+    color: var(--secondary-text);
+  }
+
+  /* Form styles */
+  .form-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .form-col {
+    flex: 1;
+  }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--divider-color);
+  }
+
+  .preferences-section {
+    margin-top: 24px;
+  }
+
+  .checkbox-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 16px;
+  }
+
+  .checkbox-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  /* Customer view modal */
+  .customer-details {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .details-section {
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--divider-color);
+  }
+
+  .details-section:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .detail-row {
+    display: flex;
+    margin-bottom: 12px;
+  }
+
+  .detail-label {
+    width: 120px;
+    font-weight: 500;
+    color: var(--secondary-text);
+  }
+
+  .detail-value {
+    flex: 1;
+  }
+
+  /* Purchase summary */
+  .purchase-summary {
+    display: flex;
+    gap: 32px;
+    margin-bottom: 24px;
+    background-color: var(--secondary-color);
+    padding: 16px;
+    border-radius: var(--radius);
+  }
+
+  .summary-stat {
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: var(--primary-color);
+  }
+
+  .stat-label {
+    font-size: 14px;
+    color: var(--secondary-text);
+  }
+
+  /* Timeline */
+  .timeline-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .timeline-item {
+    display: flex;
+    gap: 16px;
+  }
+
+  .timeline-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: var(--secondary-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .timeline-content {
+    flex: 1;
+  }
+
+  .timeline-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .timeline-title {
+    font-weight: 500;
+  }
+
+  .timeline-date {
+    font-size: 12px;
+    color: var(--secondary-text);
+  }
+
+  .timeline-body {
+    font-size: 14px;
+    color: var(--secondary-text);
+  }
+
+  .customer-notes {
+    background-color: var(--secondary-color);
+    padding: 16px;
+    border-radius: var(--radius);
+    min-height: 80px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* Responsive customers component */
+  @media (max-width: 768px) {
+    .customers-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .header-actions {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+
+    .search-container {
+      width: 100%;
+    }
+
+    .customers-table th:nth-child(2),
+    .customers-table td:nth-child(2),
+    .customers-table th:nth-child(4),
+    .customers-table td:nth-child(4),
+    .customers-table th:nth-child(5),
+    .customers-table td:nth-child(5) {
+      display: none;
+    }
+
+    .form-row {
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .purchase-summary {
+      flex-direction: column;
+      gap: 16px;
+      padding: 12px;
+    }
+  }
+</style>
