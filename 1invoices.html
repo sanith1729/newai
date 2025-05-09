@@ -1,0 +1,506 @@
+<!-- Invoices Management Component -->
+<div class="invoice-module">
+  <!-- Filter sidebar -->
+  <div class="filter-sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">Filters</div>
+      <button id="clearFiltersBtn" class="btn-text">
+        <i class="fas fa-times"></i> Clear
+      </button>
+    </div>
+    
+    <div class="filter-section">
+      <h4 class="filter-heading">Status</h4>
+      <div class="filter-options">
+        <label class="filter-option">
+          <input type="checkbox" name="status" value="draft"> Draft
+        </label>
+        <label class="filter-option">
+          <input type="checkbox" name="status" value="paid"> Paid
+        </label>
+        <label class="filter-option">
+          <input type="checkbox" name="status" value="pending"> Pending
+        </label>
+      </div>
+    </div>
+    
+    <div class="filter-section">
+      <h4 class="filter-heading">Date Range</h4>
+      <div class="filter-date-range">
+        <div class="form-group">
+          <label class="filter-label">From</label>
+          <input type="date" id="dateFrom" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="filter-label">To</label>
+          <input type="date" id="dateTo" class="form-control">
+        </div>
+      </div>
+    </div>
+    
+    <div class="filter-section">
+      <h4 class="filter-heading">Amount</h4>
+      <div class="filter-amount-range">
+        <div class="form-group">
+          <label class="filter-label">Min ($)</label>
+          <input type="number" id="amountMin" class="form-control" min="0">
+        </div>
+        <div class="form-group">
+          <label class="filter-label">Max ($)</label>
+          <input type="number" id="amountMax" class="form-control" min="0">
+        </div>
+      </div>
+    </div>
+    
+    <button id="applyFiltersBtn" class="btn btn-primary" style="width: 100%;">
+      Apply Filters
+    </button>
+  </div>
+
+  <!-- Invoice content area -->
+  <div class="invoice-content">
+    <div id="invoiceContent">
+      <div class="content-header">
+        <h2 class="content-title">Invoices</h2>
+        <div class="content-actions">
+          <div class="search-container">
+            <input type="text" id="searchInvoices" class="search-input" placeholder="Search invoices...">
+          </div>
+          <button id="refreshInvoicesBtn" class="btn">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+          <button id="createInvoiceBtn" class="btn btn-primary">
+            <i class="fas fa-plus"></i> Create Invoice
+          </button>
+        </div>
+      </div>
+
+      <div class="invoice-table-container">
+        <table class="invoice-table">
+          <thead>
+            <tr>
+              <th>Invoice #</th>
+              <th>Customer</th>
+              <th>Date</th>
+              <th>Due Date</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="invoiceTableBody">
+            <!-- Invoice rows will be populated here -->
+            <tr>
+              <td colspan="7" class="loading-cell">
+                <div class="loading-container">
+                  <div class="spinner"></div>
+                  <p>Loading invoices...</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="pagination">
+        <button id="prevPageBtn" class="btn btn-sm" disabled>
+          <i class="fas fa-chevron-left"></i> Previous
+        </button>
+        <span id="paginationInfo">Page 1 of 1</span>
+        <button id="nextPageBtn" class="btn btn-sm" disabled>
+          Next <i class="fas fa-chevron-right"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create/Edit Invoice Modal -->
+  <div id="invoiceModal" class="modal-overlay" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="invoiceModalTitle" class="modal-title">Create Invoice</h3>
+        <button class="modal-close" id="closeInvoiceModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="invoiceForm">
+          <input type="hidden" id="invoiceId">
+          
+          <div class="form-row">
+            <div class="form-group form-col">
+              <label for="invoiceNumber" class="form-label required">Invoice Number</label>
+              <input type="number" id="invoiceNumber" class="form-control" required>
+            </div>
+            <div class="form-group form-col">
+              <label for="invoiceMemoNumber" class="form-label">Memo Number</label>
+              <input type="number" id="invoiceMemoNumber" class="form-control">
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="invoiceCustomer" class="form-label required">Customer</label>
+            <select id="invoiceCustomer" class="form-control" required>
+              <option value="">Select a customer</option>
+            </select>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group form-col">
+              <label for="invoiceDate" class="form-label required">Date</label>
+              <input type="date" id="invoiceDate" class="form-control" required>
+            </div>
+            <div class="form-group form-col">
+              <label for="invoiceDueDate" class="form-label required">Due Date</label>
+              <input type="date" id="invoiceDueDate" class="form-control" required>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="invoiceStatus" class="form-label">Status</label>
+            <select id="invoiceStatus" class="form-control">
+              <option value="draft">Draft</option>
+              <option value="pending">Pending</option>
+              <option value="paid">Paid</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          
+          <div class="item-editor">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <label class="form-label">Items</label>
+              <button type="button" id="addInvoiceItemBtn" class="btn btn-primary btn-icon">
+                <i class="fas fa-plus"></i>
+              </button>
+            </div>
+            
+            <div id="invoiceItemList" class="item-list">
+              <!-- Items will be added here -->
+            </div>
+            
+            <div class="invoice-summary">
+              <div class="summary-row">
+                <span class="summary-label">Subtotal:</span>
+                <span class="summary-value" id="invoiceSubtotal">$0.00</span>
+              </div>
+              <div class="summary-row">
+                <span class="summary-label">Tax (8%):</span>
+                <span class="summary-value" id="invoiceTax">$0.00</span>
+              </div>
+              <div class="summary-row total">
+                <span class="summary-label">Total:</span>
+                <span class="summary-value" id="invoiceTotal">$0.00</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="invoiceNotes" class="form-label">Notes</label>
+            <textarea id="invoiceNotes" class="form-control" rows="3"></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button id="cancelInvoiceBtn" class="btn">Cancel</button>
+        <button id="saveInvoiceBtn" class="btn btn-primary">Save Invoice</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Invoice Module Specific Styles */
+  .invoice-module {
+    display: flex;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  /* Filter sidebar */
+  .filter-sidebar {
+    width: 280px;
+    background-color: #FFFFFF;
+    border-right: 1px solid var(--divider-color);
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    height: 100%;
+  }
+
+  .sidebar-header {
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .sidebar-title {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .btn-text {
+    background: none;
+    border: none;
+    color: var(--secondary-text);
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .btn-text:hover {
+    color: var(--primary-color);
+  }
+
+  .filter-section {
+    margin-bottom: 24px;
+  }
+
+  .filter-heading {
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 12px;
+  }
+
+  .filter-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .filter-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .filter-date-range,
+  .filter-amount-range {
+    display: flex;
+    gap: 12px;
+  }
+
+  .filter-date-range .form-group,
+  .filter-amount-range .form-group {
+    flex: 1;
+  }
+
+  .filter-label {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+
+  /* Invoice content area */
+  .invoice-content {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+    background-color: #FAFAFA;
+  }
+
+  .content-header {
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .content-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .search-container {
+    width: 260px;
+    position: relative;
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 8px 12px 8px 36px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    font-size: 14px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236E6E80' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 12px center;
+  }
+
+  /* Invoice table */
+  .invoice-table-container {
+    background-color: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    overflow: auto;
+  }
+
+  .invoice-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .invoice-table th,
+  .invoice-table td {
+    padding: 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--divider-color);
+  }
+
+  .invoice-table th {
+    background-color: #F7F7F8;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--secondary-text);
+  }
+
+  .invoice-table tr:hover td {
+    background-color: rgba(16, 163, 127, 0.05);
+  }
+
+  .loading-cell {
+    text-align: center;
+    padding: 40px;
+  }
+
+  .loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  /* Invoice details */
+  .invoice-customer {
+    font-weight: 500;
+  }
+
+  .invoice-amount {
+    font-weight: 500;
+  }
+
+  .invoice-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .invoice-action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--secondary-color);
+    color: var(--secondary-text);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .invoice-action-btn:hover {
+    background-color: var(--divider-color);
+    color: var(--text-color);
+  }
+
+  .view-btn:hover {
+    color: var(--link-color);
+  }
+
+  .edit-btn:hover {
+    color: var(--primary-color);
+  }
+
+  .delete-btn:hover {
+    color: var(--danger-color);
+  }
+
+  /* Pagination */
+  .pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .btn-sm {
+    padding: 6px 12px;
+    font-size: 14px;
+  }
+
+  #paginationInfo {
+    font-size: 14px;
+    color: var(--secondary-text);
+  }
+
+  /* Invoice form */
+  .form-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .form-col {
+    flex: 1;
+  }
+
+  /* Invoice summary */
+  .invoice-summary {
+    margin-top: 20px;
+    border-top: 1px solid var(--divider-color);
+    padding-top: 16px;
+  }
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .summary-row.total {
+    font-weight: 600;
+    margin-top: 12px;
+    border-top: 1px solid var(--divider-color);
+    padding-top: 12px;
+  }
+
+  /* Responsive invoices component */
+  @media (max-width: 768px) {
+    .invoice-module {
+      flex-direction: column;
+    }
+
+    .filter-sidebar {
+      width: 100%;
+      height: auto;
+      padding: 16px;
+      border-right: none;
+      border-bottom: 1px solid var(--divider-color);
+    }
+
+    .content-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .content-actions {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+
+    .search-container {
+      width: 100%;
+    }
+
+    .invoice-table th:nth-child(3),
+    .invoice-table td:nth-child(3),
+    .invoice-table th:nth-child(4),
+    .invoice-table td:nth-child(4) {
+      display: none;
+    }
+  }
+</style>
