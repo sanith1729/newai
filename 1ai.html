@@ -1051,7 +1051,18 @@
             to { transform: rotate(360deg); }
         }
 
-        /* Dynamic component container */
+        /* Mobile responsiveness */
+        .toggle-sidebar-button {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--secondary-text);
+            font-size: 20px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+
+        /* ===== DYNAMIC COMPONENT CONTAINER ===== */
         .injected-module {
             margin-top: 24px;
             padding: 16px;
@@ -1073,21 +1084,11 @@
             font-weight: 500;
             color: var(--primary-color);
         }
-
+        
         .memo-action-indicator i {
             font-size: 16px;
         }
-
-        /* Mobile responsiveness */
-        .toggle-sidebar-button {
-            display: none;
-            background: none;
-            border: none;
-            color: var(--secondary-text);
-            font-size: 20px;
-            cursor: pointer;
-            margin-right: 10px;
-        }
+        /* ===== END DYNAMIC COMPONENT CONTAINER ===== */
 
         /* Responsive design */
         @media (max-width: 768px) {
@@ -1282,8 +1283,8 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- Dynamic Component Container -->
+
+            <!-- Dynamic Component Container - ADD THIS -->
             <div id="dynamicComponentContainer" class="injected-module"></div>
 
             <!-- Input Area -->
@@ -1355,13 +1356,10 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            // API URL for all endpoints
-            const API_URL = "http://146.190.115.76:3000";
-            
             // DOM Elements - App UI
             const authContainer = document.getElementById('authContainer');
-            const appContainer = document.getElementById('appMainContainer');
             const appHeader = document.getElementById('appHeader');
+            const appMainContainer = document.getElementById('appMainContainer');
             const messagesContainer = document.getElementById('messagesContainer');
             const userInput = document.getElementById('userInput');
             const sendButton = document.getElementById('sendButton');
@@ -1432,7 +1430,9 @@
             let memoryMode = false;
             let birthdayKeywords = ['birthday', 'born']; // Keywords to filter out from search
             let isSearchingChats = false; // Flag to indicate if we're in search mode
-            let currentInjectedComponent = null; // Track the current injected component
+            let currentInjectedComponent = null; // For component management
+            
+            const API_URL = "http://146.190.115.76:3000"; // Centralized API prefix
             
             // Initialize debug panel in development environment
             initializeDebugPanel();
@@ -1707,7 +1707,7 @@
             function showAuthScreen() {
                 authContainer.style.display = 'block';
                 appHeader.style.display = 'none';
-                appContainer.style.display = 'none';
+                appMainContainer.style.display = 'none';
                 
                 // Reset forms
                 loginForm.style.display = 'block';
@@ -1729,7 +1729,7 @@
                 // Hide auth container and show app
                 authContainer.style.display = 'none';
                 appHeader.style.display = 'flex';
-                appContainer.style.display = 'flex';
+                appMainContainer.style.display = 'flex';
                 
                 // Set user avatar and name
                 const user = getUser();
@@ -1944,7 +1944,7 @@
                         currentChatId = rowId;
                         currentColumn = column;
                         
-                        // Hide any injected component
+                        // Remove any injected component
                         hideComponent();
                         
                         // Render messages
@@ -3349,7 +3349,9 @@
                 console.log(`[${level.toUpperCase()}] ${message}`);
             }
             
-            // Component management functions
+            //==============================================================
+            // DYNAMIC COMPONENT MANAGEMENT
+            //==============================================================
             
             /**
              * Process the AI response and determine if component injection is needed
@@ -3361,7 +3363,7 @@
                     return;
                 }
                 
-                console.log("🔍 [COMPONENT] Checking for component actions in:", data.action);
+                console.log("🔍 [COMPONENT] Checking for component actions:", data.action);
                 
                 // Only inject component for update or create actions
                 if (data.action === 'update_memo' || data.action === 'create_memo') {
@@ -3500,6 +3502,10 @@
                 dynamicComponentContainer.innerHTML = '';
                 currentInjectedComponent = null;
             }
+            
+            //==============================================================
+            // END DYNAMIC COMPONENT MANAGEMENT
+            //==============================================================
         });
     </script>
 </body>
