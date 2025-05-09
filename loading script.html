@@ -1,0 +1,101 @@
+/**
+ * Dynamic Component Loader
+ * 
+ * This script provides functions to inject and manage business module components
+ * dynamically into the AI interface based on conversation context.
+ */
+
+let currentInjectedComponent = null;
+
+/**
+ * Injects a component into the dynamic component container
+ * @param {string} componentName - Name of component to load (e.g., 'memos', 'invoices', 'customers')
+ * @returns {Promise<void>}
+ */
+async function injectComponent(componentName) {
+  const container = document.getElementById('dynamicComponentContainer');
+
+  // Step 1: Remove existing module
+  container.innerHTML = '';
+  currentInjectedComponent = null;
+
+  // Step 2: Load and inject the HTML file
+  try {
+    debugLog('info', `Loading component: ${componentName}`);
+    const res = await fetch(`/${componentName}.component.html`);
+    if (!res.ok) {
+      throw new Error(`Failed to load component HTML: ${res.status}`);
+    }
+    const html = await res.text();
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<p>Error loading component.</p>';
+    debugLog('error', `Failed to load ${componentName} HTML: ${err.message}`);
+    showToast(`Error loading ${componentName} component`, 'error');
+    return;
+  }
+
+  // Step 3: Load and attach its JS file if not already loaded
+  if (!document.getElementById(`${componentName}-script`)) {
+    try {
+      const script = document.createElement('script');
+      script.src = `/${componentName}.js?v=${Date.now()}`; // cache-busted
+      script.id = `${componentName}-script`;
+      document.body.appendChild(script);
+      debugLog('info', `Loaded script: ${componentName}.js`);
+    } catch (err) {
+      debugLog('error', `Failed to load ${componentName} JS: ${err.message}`);
+      showToast(`Error loading ${componentName} script`, 'error');
+    }
+  }
+
+  // Track what is loaded
+  currentInjectedComponent = componentName;
+  debugLog('info', `Component ${componentName} injected successfully`);
+}
+
+/**
+ * Handles component injection based on AI response
+ * @param {Object} data - The response data from the AI
+ */
+function handleComponentInjection(data) {
+  if (!data) return;
+  
+  if (data.action === 'update_memo' || data.action === 'edit_memo' || 
+      data.action === 'view_memos' || data.action === 'create_memo') {
+    injectComponent('memos');
+  } 
+  else if (data.action === 'create_invoice' || data.action === 'edit_invoice' || 
+           data.action === 'view_invoices') {
+    injectComponent('invoices');
+  } 
+  else if (data.action === 'edit_customer' || data.action === 'view_customers' || 
+           data.action === 'add_customer') {
+    injectComponent('customers');
+  } 
+  else if (data.action === 'clear_component') {
+    // Clear any injected component
+    const container = document.getElementById('dynamicComponentContainer');
+    container.innerHTML = '';
+    currentInjectedComponent = null;
+    debugLog('info', 'Cleared component container');
+  }
+}
+
+/**
+ * Gets the currently injected component name
+ * @returns {string|null} - Name of currently injected component or null
+ */
+function getCurrentComponent() {
+  return currentInjectedComponent;
+}
+
+/**
+ * Clears the currently injected component
+ */
+function clearComponent() {
+  const container = document.getElementById('dynamicComponentContainer');
+  container.innerHTML = '';
+  currentInjectedComponent = null;
+  debugLog('info', 'Manually cleared component container');
+}
